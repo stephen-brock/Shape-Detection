@@ -15,32 +15,6 @@ import sys
 #Relative path to classifier cascade
 ClassifierPath = "NoEntryCascade/cascade.xml"
 
-def detectAndDisplay(frame, imageName):
-    imageName = imageName.split('/')[-1].split('.')[0]
-
-	# 1. Prepare Image by turning it into Grayscale and normalising lighting
-    frame_gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-    frame_gray = cv2.equalizeHist(frame_gray)
-    # 2. Perform Viola-Jones Object Detection
-    faces = model.detectMultiScale(frame_gray, scaleFactor=1.1, minNeighbors=1, flags=0, minSize=(10,10), maxSize=(300,300))
-    # 3. Print number of Faces found
-    print(len(faces))
-    # 4. Draw box around faces found
-    gt = readGroundtruth(imageName=imageName)
-    for i in range(0, len(gt)):
-        start_point = (int(gt[i][0]), int(gt[i][1]))
-        end_point = (int(gt[i][0] + gt[i][2]), int(gt[i][1] + gt[i][3]))
-        colour = (0, 0, 255)
-        thickness = 2
-        frame = cv2.rectangle(frame, start_point, end_point, colour, thickness)
-
-    for i in range(0, len(faces)):
-        start_point = (faces[i][0], faces[i][1])
-        end_point = (faces[i][0] + faces[i][2], faces[i][1] + faces[i][3])
-        colour = (0, 255, 0)
-        thickness = 2
-        frame = cv2.rectangle(frame, start_point, end_point, colour, thickness)
-
 def loadImages(directory='No_entry'):
     dirs = os.listdir(directory)
     images = {}
@@ -60,6 +34,8 @@ def intersectionOverUnion(A, B):
     return float(areaIntersection) / unionArea
 
 def calculateF1(TP, FP, FN):
+    if (TP == 0):
+        return 0
     precision = float(TP) / (TP + FP)
     recall = float(TP) / (TP + FN)
     return 2 * precision * recall / (precision + recall)
@@ -85,7 +61,11 @@ def printScores(groundTruth, detectionDict, threshold = 0.5):
                 fn += 1
         fp = max(0,len(detections) - len(gt))
         f1Score = calculateF1(tp, fp, fn)
-        tpr = float(tp) / len(gt)
+        if (len(gt) == 0):
+            tpr = 1
+        else:
+            tpr = float(tp) / len(gt)
+
         print(image_name, "TP:", tp, "FP:", fp, "FN:", fn, "TPR:", tpr, "F1:", f1Score)
 
         totalTP += tp
@@ -96,14 +76,14 @@ def printScores(groundTruth, detectionDict, threshold = 0.5):
 
     num_images = len(groundTruth)
     
-    print("AVERAGE: ", "TP:", totalTP / num_images, "FP:", totalFP / num_images, "FN:", totalFN / num_images, "TPR:", totalTPR / num_images, "F1:", totalF1 / num_images)
+    print("AVERAGE: ", "TP:", totalTP / num_images, "FP:", totalFP / num_images, "FN:", totalFN / num_images, "TPR:", totalTPR / num_images,  "F1:", totalF1 / num_images)
     
                 
 
 def getDetections(model, images):
     detectDict = {}
     for img_name, image in images.items():
-        detections = model.detectMultiScale(image, scaleFactor=1.1, minNeighbors=1, flags=0, minSize=(10,10), maxSize=(300,300))
+        detections = model.detectMultiScale(image, scaleFactor=1.1, minNeighbors=6, flags=0, minSize=(10,10), maxSize=(300,300))
         detectDict[img_name] = detections
 
     return detectDict
@@ -114,6 +94,8 @@ def getGroundTruths(filename='groundtruth.txt'):
     with open(filename) as f:
         # read each line in text file
         for line in f.readlines():
+            if (line == '\n'):
+                continue
             split_line = line.split(",")
             #first
             img_name = split_line[0]

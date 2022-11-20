@@ -1,2 +1,62 @@
 NoEntry0.bmp, 157, 242, 45, 45
 NoEntry0.bmp, 605, 242, 45, 45
+
+NoEntry1.bmp, 165, 110, 90, 90
+
+NoEntry2.bmp, 367, 138, 130, 130
+
+NoEntry3.bmp, 22, 0, 84, 84
+NoEntry3.bmp, 416, 9, 180, 180
+
+NoEntry4.bmp, 196, 179, 44, 44
+NoEntry4.bmp, 743, 210, 46, 46
+
+NoEntry5.bmp, 127, 313, 40, 40
+NoEntry5.bmp, 307, 332, 34, 34
+NoEntry5.bmp, 431, 345, 29, 29
+NoEntry5.bmp, 431, 345, 29, 29
+NoEntry5.bmp, 523, 355, 24, 24
+NoEntry5.bmp, 595, 364, 23, 23
+NoEntry5.bmp, 651, 369, 19, 19
+NoEntry5.bmp, 695, 375, 17, 17
+NoEntry5.bmp, 734, 380, 15, 15
+NoEntry5.bmp, 844, 382, 15, 15
+NoEntry5.bmp, 866, 384, 15, 15
+
+NoEntry6.bmp, 188, 322, 137, 137
+NoEntry6.bmp, 384, 214, 200, 200
+NoEntry6.bmp, 598, 230, 214, 214
+NoEntry6.bmp, 757, 415, 122, 122
+
+NoEntry7.bmp, 554, 176, 32, 32
+
+NoEntry8.bmp, 200, 81, 95, 95
+NoEntry8.bmp, 149, 181, 55, 55
+NoEntry8.bmp, 108, 240, 39, 39
+NoEntry8.bmp, 87, 261, 29, 29
+NoEntry8.bmp, 78, 277, 24, 24
+NoEntry8.bmp, 71, 297, 18, 18
+
+NoEntry9.bmp, 470, 577, 52, 52
+
+NoEntry10.bmp, 235, 136, 77, 77
+NoEntry10.bmp, 508, 152, 89, 89
+NoEntry10.bmp, 575, 174, 60, 60
+
+NoEntry11.bmp, 54, 218, 55, 55
+NoEntry11.bmp, 444, 163, 84, 84
+
+NoEntry12.bmp, 98, 240, 79, 79
+NoEntry12.bmp, 242, 184, 50, 50
+NoEntry12.bmp, 293, 120, 39, 39
+NoEntry12.bmp, 437, 83, 31, 31
+NoEntry12.bmp, 660, 119, 37, 37
+NoEntry12.bmp, 731, 174, 52, 52
+NoEntry12.bmp, 820, 250, 77, 77
+
+NoEntry13.bmp, 383, 580, 50, 50
+
+NoEntry14.bmp, 432, 289, 54, 54
+
+NoEntry15.bmp, 326, 125, 53, 53
+NoEntry15.bmp, 388, 125, 53, 53
