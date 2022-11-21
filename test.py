@@ -156,17 +156,20 @@ def printScores(groundTruth, detectionDict, threshold = 0.5):
     
     print("AVERAGE: ", "TP:", totalTP / num_images, "FP:", totalFP / num_images, "FN:", totalFN / num_images, "TPR:", totalTPR / num_images,  "F1:", totalF1 / num_images)
     
-def removeDetectionsWithoutLines(sobelImage, detections, threshold = 5):
+def removeDetectionsWithoutLines(sobelImage, detections, threshold = 0.0001, thetaResolution = 10):
     newDetects = []
     for detect in detections:
         mag = sobelImage[0][detect[1]:(detect[1] + detect[3]),detect[0]:(detect[0] + detect[2])]
         dir = sobelImage[1][detect[1]:(detect[1] + detect[3]),detect[0]:(detect[0] + detect[2])]
-        width = max(detect[2],detect[3])
-        hSpace = houghLine(mag, dir, width, width)
-        maxLine = np.max(hSpace)
+        maxWidth = max(detect[2],detect[3])
+        width = thetaResolution
+        widthSquared = float(maxWidth) * maxWidth
+        hSpace = houghLine(mag, dir, 1, width)
+        maxLine = (hSpace[0][int(hSpace.shape[1] / 2)]) * (hSpace[0][0] + hSpace[0][width - 1]) / (widthSquared * widthSquared * widthSquared)
         print(maxLine)
         if maxLine >= threshold:
             newDetects.append(detect)
+    return newDetects
 
 def removeDetectionsWithoutCircle(sobelImage, detections, threshold = 5):
     newDetects = []
@@ -192,8 +195,8 @@ def getDetections(model, images):
         detections = model.detectMultiScale(image, scaleFactor=1.1, minNeighbors=1, flags=0, minSize=(10,10), maxSize=(250,250))
         # print("Circles")
         # detections = removeDetectionsWithoutCircle(sobelOutput, detections, threshold=4)
-        # print("Lines")
-        # detections = removeDetectionsWithoutLines(sobelOutput, detections, threshold=4)
+        print("Lines")
+        detections = removeDetectionsWithoutLines(sobelOutput, detections)
         
         detectDict[img_name] = detections
 
@@ -261,9 +264,19 @@ images = loadImages(downscale = 1)
 print("clean images")
 cleanImages = cleanupImages(images)
 
-detections = getDetections(model, cleanImages)
+#detections = getDetections(model, cleanImages)
 
 groundTruths = getGroundTruths()
+for image_name, image in cleanImages.items():
+    print(image_name)
+    sobelOutput = sobel(image, threshold=0.8)
+    print("Detections")
+    print("Circles")
+    detections = removeDetectionsWithoutCircle(sobelOutput, groundTruths[image_name], threshold=4)
+    print("Lines")
+    detections = removeDetectionsWithoutLines(sobelOutput, groundTruths[image_name])
+    
+
 printScores(groundTruths, detections)
 displayDetections(images, detections, (0,255,0), thickness=2)
 displayDetections(images, groundTruths, (0,0,255), thickness=2)
