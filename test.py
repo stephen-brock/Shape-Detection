@@ -15,6 +15,10 @@ import math
 
 #Relative path to classifier cascade
 ClassifierPath = "NoEntryCascade/cascade.xml"
+MinLineProbability = 0.7
+MaxLineProbability = 6
+MinCircleProbability = 4
+MinSegmentProbability = 0.3
 
 def loadImages(directory='No_entry', downscale = 1):
     dirs = os.listdir(directory)
@@ -155,50 +159,64 @@ def printScores(groundTruth, detectionDict, threshold = 0.5):
     num_images = len(groundTruth)
     
     print("AVERAGE: ", "TP:", totalTP / num_images, "FP:", totalFP / num_images, "FN:", totalFN / num_images, "TPR:", totalTPR / num_images,  "F1:", totalF1 / num_images)
-    
-def removeDetectionsWithoutLines(sobelImage, detections, threshold = 0.0001, thetaResolution = 10):
-    newDetects = []
-    for detect in detections:
-        mag = sobelImage[0][detect[1]:(detect[1] + detect[3]),detect[0]:(detect[0] + detect[2])]
-        dir = sobelImage[1][detect[1]:(detect[1] + detect[3]),detect[0]:(detect[0] + detect[2])]
-        maxWidth = max(detect[2],detect[3])
-        width = thetaResolution
-        widthSquared = float(maxWidth) * maxWidth
-        hSpace = houghLine(mag, dir, 1, width)
-        maxLine = (hSpace[0][int(hSpace.shape[1] / 2)]) * (hSpace[0][0] + hSpace[0][width - 1]) / (widthSquared * widthSquared * widthSquared)
-        print(maxLine)
-        if maxLine >= threshold:
-            newDetects.append(detect)
-    return newDetects
 
-def removeDetectionsWithoutCircle(sobelImage, detections, threshold = 5):
-    newDetects = []
-    for detect in detections:
-        mag = sobelImage[0][detect[1]:(detect[1] + detect[3]),detect[0]:(detect[0] + detect[2])]
-        dir = sobelImage[1][detect[1]:(detect[1] + detect[3]),detect[0]:(detect[0] + detect[2])]
-        hSpace = houghCircle(mag, dir, 5, max(detect[2],detect[3]))
-        maxCircle = np.max(hSpace[int(hSpace.shape[0] / 2)][int(hSpace.shape[1] / 2)])
-        print(maxCircle)
-        if maxCircle >= threshold:
-            newDetects.append(detect)
+def segmentationProbability(image, detect):
+    redSum = 0
+    for j in range(detect[1], detect[1] + detect[3]):
+        if j < 0 or j >= image.shape[0]:
+            print(j)
+            continue
+        for i in range(detect[0], detect[0] + detect[2]):
+            if i < 0 or i >= image.shape[1]:
+                continue
+            redInv = image[j][i][0] + image[j][i][1]
+            redSum += max(0,image[j][i][2] - redInv)
+    return redSum / float(detect[2] * detect[3] * 255.0)
+   
+def lineProbability(sobelImage, detect, thetaResolution = 10):
+    mag = sobelImage[0][detect[1]:(detect[1] + detect[3]),detect[0]:(detect[0] + detect[2])]
+    dir = sobelImage[1][detect[1]:(detect[1] + detect[3]),detect[0]:(detect[0] + detect[2])]
+    resolution = detect[2] * detect[3]
+    width = thetaResolution
+    hSpace = houghLine(mag, dir, 1, width)
+    maxLine = (hSpace[0][int(hSpace.shape[1] / 2)]) * (hSpace[0][0] + hSpace[0][width - 1]) / (resolution * width)
+    return maxLine
 
-    return newDetects
+def circleProbability(sobelImage, detect):
+    mag = sobelImage[0][detect[1]:(detect[1] + detect[3]),detect[0]:(detect[0] + detect[2])]
+    dir = sobelImage[1][detect[1]:(detect[1] + detect[3]),detect[0]:(detect[0] + detect[2])]
+    maxWidth = max(detect[2],detect[3])
+    # resolution = detect[2] * detect[3]
+    minRadius = 10
+    maxRadius = int(maxWidth)
+    hSpace = houghCircle(mag, dir, minRadius, maxRadius)
+    maxCircle = np.max(hSpace[maxWidth // 2][maxWidth // 2])
+    return maxCircle
 
-def getDetections(model, images):
+def getDetections(model, cleanedImages, images):
     detectDict = {}
     print("detect")
-    for img_name, image in images.items():
-        print(img_name) 
+    for image_name, image in cleanedImages.items():
+        print(image_name) 
         print("Sobel")
         sobelOutput = sobel(image, threshold=0.8)
         print("Detections")
-        detections = model.detectMultiScale(image, scaleFactor=1.1, minNeighbors=1, flags=0, minSize=(10,10), maxSize=(250,250))
-        # print("Circles")
-        # detections = removeDetectionsWithoutCircle(sobelOutput, detections, threshold=4)
-        print("Lines")
-        detections = removeDetectionsWithoutLines(sobelOutput, detections)
+        detections = model.detectMultiScale(image, scaleFactor=1.1, minNeighbors=1, flags=0, minSize=(10,10), maxSize=(300,300))
+        filteredDetections = []
+        print("Filter")
+        uncleaned = images[image_name]
+        for detect in detections:
+            circleProb = circleProbability(sobelOutput, detect)
+            print(circleProb)
+            lineProb = lineProbability(sobelOutput, detect)
+            print(lineProb)
+            segProb = segmentationProbability(uncleaned, detect)
+            print(segProb)
+            print()
+            if lineProb >= MinLineProbability and lineProb <= MaxLineProbability and circleProb >= MinCircleProbability and segProb >= MinSegmentProbability:
+                filteredDetections.append(detect)
         
-        detectDict[img_name] = detections
+        detectDict[image_name] = filteredDetections
 
     return detectDict
 
@@ -256,6 +274,41 @@ def drawLines(image, hLine, threshold=10):
                 y1 = int(c + dydx * image.shape[1])
                 cv2.line(image, (0,y0), (image.shape[1], y1), (0,255,0), 1)
 
+def printThresholdRanges(images, cleanImages, groundTruths):
+    minCircle = 1
+    maxCircle = 0
+    minLine = 1
+    maxLine = 0
+    minSegmentation = 1
+    maxSegmentation = 0
+    for image_name, image in cleanImages.items():
+        print(image_name)
+        sobelOutput = sobel(image, threshold=0.8)
+        for gt in groundTruths[image_name]:
+            print("circle")
+            circle = circleProbability(sobelOutput, gt)
+            print(circle)
+            print("line")
+            line = lineProbability(sobelOutput, gt)
+            print("seg")
+            segmentation = segmentationProbability(images[image_name], gt)
+            minCircle = min(minCircle, circle)
+            maxCircle = max(maxCircle, circle)
+            minLine = min(minLine, line)
+            maxLine = max(maxLine, line)
+            minSegmentation = min(minSegmentation, segmentation)
+            maxSegmentation = max(maxSegmentation, segmentation)
+
+    print("Parameters")
+    print("line")
+    print(minLine)
+    print(maxLine)
+    print("circle")
+    print(minCircle)
+    print(maxCircle)
+    print("seg")
+    print(minSegmentation)
+    print(maxSegmentation)
 
 #Load model
 model = cv2.CascadeClassifier(ClassifierPath)
@@ -264,17 +317,10 @@ images = loadImages(downscale = 1)
 print("clean images")
 cleanImages = cleanupImages(images)
 
-#detections = getDetections(model, cleanImages)
-
 groundTruths = getGroundTruths()
-for image_name, image in cleanImages.items():
-    print(image_name)
-    sobelOutput = sobel(image, threshold=0.8)
-    print("Detections")
-    print("Circles")
-    detections = removeDetectionsWithoutCircle(sobelOutput, groundTruths[image_name], threshold=4)
-    print("Lines")
-    detections = removeDetectionsWithoutLines(sobelOutput, groundTruths[image_name])
+# printThresholdRanges(images, cleanImages, groundTruths)
+detections = getDetections(model, cleanImages, images)
+
     
 
 printScores(groundTruths, detections)
