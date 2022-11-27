@@ -15,10 +15,12 @@ import math
 
 #Relative path to classifier cascade
 ClassifierPath = "NoEntryCascade/cascade.xml"
-MinLineProbability = 0.7
-MaxLineProbability = 6
+MinLineProbability = 0.05
+MaxLineProbability = 12
 MinCircleProbability = 4
-MinSegmentProbability = 0.3
+MinRedSegmentProbability = 0.3
+MinWhiteSegmentProbability = 0.5
+MaxWhiteSegmentProbability = 0.85
 
 def loadImages(directory='No_entry', downscale = 1):
     dirs = os.listdir(directory)
@@ -31,6 +33,7 @@ def loadImages(directory='No_entry', downscale = 1):
 def cleanupImages(images):
     cleaned = {}
     for img_name, image in images.items():
+        #grayscale
         cleaned[img_name] = cv2.equalizeHist(cv2.cvtColor(image, cv2.COLOR_RGB2GRAY))
 
     return cleaned
@@ -162,6 +165,7 @@ def printScores(groundTruth, detectionDict, threshold = 0.5):
 
 def segmentationProbability(image, detect):
     redSum = 0
+    whiteSum = 0
     for j in range(detect[1], detect[1] + detect[3]):
         if j < 0 or j >= image.shape[0]:
             print(j)
@@ -169,9 +173,13 @@ def segmentationProbability(image, detect):
         for i in range(detect[0], detect[0] + detect[2]):
             if i < 0 or i >= image.shape[1]:
                 continue
-            redInv = image[j][i][0] + image[j][i][1]
-            redSum += max(0,image[j][i][2] - redInv)
-    return redSum / float(detect[2] * detect[3] * 255.0)
+            col = image[j][i]
+            redInv = col[0] + col[1]
+            redSum += max(0,col[2] - redInv)
+            maxCol = (np.max(col) * 3)
+            whiteSum += np.sum(col) / (maxCol if maxCol > 0 else 1)
+    sum = float(detect[2] * detect[3])
+    return redSum / (sum * 255.0), whiteSum / sum
    
 def lineProbability(sobelImage, detect, thetaResolution = 10):
     mag = sobelImage[0][detect[1]:(detect[1] + detect[3]),detect[0]:(detect[0] + detect[2])]
@@ -199,22 +207,27 @@ def getDetections(model, cleanedImages, images):
     for image_name, image in cleanedImages.items():
         print(image_name) 
         print("Sobel")
-        sobelOutput = sobel(image, threshold=0.8)
+        sobelOutput = sobel(image, threshold=0.5)
         print("Detections")
-        detections = model.detectMultiScale(image, scaleFactor=1.1, minNeighbors=1, flags=0, minSize=(10,10), maxSize=(300,300))
+        detections = model.detectMultiScale(image, scaleFactor=1.01, minNeighbors=1, flags=0, minSize=(10,10), maxSize=(300,300))
         filteredDetections = []
         print("Filter")
         uncleaned = images[image_name]
         for detect in detections:
-            circleProb = circleProbability(sobelOutput, detect)
-            print(circleProb)
-            lineProb = lineProbability(sobelOutput, detect)
-            print(lineProb)
-            segProb = segmentationProbability(uncleaned, detect)
-            print(segProb)
             print()
-            if lineProb >= MinLineProbability and lineProb <= MaxLineProbability and circleProb >= MinCircleProbability and segProb >= MinSegmentProbability:
-                filteredDetections.append(detect)
+            redSegProb, whiteSegProb = segmentationProbability(uncleaned, detect)
+            print("seg ", redSegProb, " ", whiteSegProb)
+            if (redSegProb < MinRedSegmentProbability or whiteSegProb < MinWhiteSegmentProbability or whiteSegProb > MaxWhiteSegmentProbability):
+                continue
+            # lineProb = lineProbability(sobelOutput, detect)
+            # print(lineProb)
+            # if (lineProb < MinLineProbability or lineProb > MaxLineProbability):
+            #     continue
+            circleProb = circleProbability(sobelOutput, detect)
+            print("Circle", circleProb)
+            if (circleProb < MinCircleProbability):
+                continue
+            filteredDetections.append(detect)
         
         detectDict[image_name] = filteredDetections
 
@@ -281,9 +294,11 @@ def printThresholdRanges(images, cleanImages, groundTruths):
     maxLine = 0
     minSegmentation = 1
     maxSegmentation = 0
+    minWhiteSegmentation = 1
+    maxWhiteSegmentation = 0
     for image_name, image in cleanImages.items():
         print(image_name)
-        sobelOutput = sobel(image, threshold=0.8)
+        sobelOutput = sobel(image, threshold=0.5) 
         for gt in groundTruths[image_name]:
             print("circle")
             circle = circleProbability(sobelOutput, gt)
@@ -291,13 +306,15 @@ def printThresholdRanges(images, cleanImages, groundTruths):
             print("line")
             line = lineProbability(sobelOutput, gt)
             print("seg")
-            segmentation = segmentationProbability(images[image_name], gt)
+            redSegment, whiteSegment = segmentationProbability(images[image_name], gt)
             minCircle = min(minCircle, circle)
             maxCircle = max(maxCircle, circle)
             minLine = min(minLine, line)
             maxLine = max(maxLine, line)
-            minSegmentation = min(minSegmentation, segmentation)
-            maxSegmentation = max(maxSegmentation, segmentation)
+            minSegmentation = min(minSegmentation, redSegment)
+            maxSegmentation = max(maxSegmentation, redSegment)
+            minWhiteSegmentation = min(minWhiteSegmentation, whiteSegment)
+            maxWhiteSegmentation = max(maxWhiteSegmentation, whiteSegment)
 
     print("Parameters")
     print("line")
@@ -309,6 +326,9 @@ def printThresholdRanges(images, cleanImages, groundTruths):
     print("seg")
     print(minSegmentation)
     print(maxSegmentation)
+    print("seg white")
+    print(minWhiteSegmentation)
+    print(maxWhiteSegmentation)
 
 #Load model
 model = cv2.CascadeClassifier(ClassifierPath)
@@ -316,6 +336,9 @@ print("load images")
 images = loadImages(downscale = 1)
 print("clean images")
 cleanImages = cleanupImages(images)
+for image_name, image in cleanImages.items():
+    cv2.imwrite("output/" + image_name, image)
+
 
 groundTruths = getGroundTruths()
 # printThresholdRanges(images, cleanImages, groundTruths)
