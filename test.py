@@ -5,9 +5,9 @@
 #
 ################################################
 
-from posixpath import split
-from shutil import SpecialFileError
-from turtle import circle, numinput
+from fileinput import filename
+from sre_constants import MAXREPEAT
+from string import whitespace
 import numpy as np
 import cv2
 import os
@@ -15,12 +15,48 @@ import math
 
 #Relative path to classifier cascade
 ClassifierPath = "NoEntryCascade/cascade.xml"
-MinLineProbability = 0.05
-MaxLineProbability = 12
-MinCircleProbability = 4
-MinRedSegmentProbability = 0.3
-MinWhiteSegmentProbability = 0.5
-MaxWhiteSegmentProbability = 0.85
+
+MinProbability = 0.05
+MaxProbability = 0.95
+
+LineMin = 2
+LineMax = 14
+LineFalloff = 50
+LineImportance = 0.1
+
+CircleMin = 6
+CircleMax = 100
+CircleFalloff = 7
+CircleImportance = 1
+
+RedThreshold = 60
+RedMin = 0.3
+RedMax = 0.6
+RedFalloff = 0.5
+RedImportance = 1
+
+WhiteThreshold = 1.5
+WhiteMin = 0.28
+WhiteMax = 0.3
+WhiteFalloff = 0.3
+WhiteImportance = 0.2
+
+TruthThreshold = 0.55
+
+def probabilityFunction(x, smallest, largest, falloff):
+    diff = min(1, 1 - max(smallest - x, x - largest))
+    diff = min(1, diff) - 1
+    diff /= falloff
+
+    return max(MinProbability, min(MaxProbability, max(0, (diff + 1) ** 2)))
+
+# def evaluate(lineProb, circleProb):
+#     sum = lineProb * LineImportance + circleProb * CircleImportance
+#     return (sum / (LineImportance + CircleImportance)) >= TruthThreshold
+
+def evaluate(lineProb, circleProb, redProb, whiteProb):
+    sum = lineProb * LineImportance + circleProb * CircleImportance + redProb * RedImportance + whiteProb * WhiteImportance
+    return (sum / (LineImportance + CircleImportance + RedImportance + WhiteImportance)) >= TruthThreshold
 
 def loadImages(directory='No_entry', downscale = 1):
     dirs = os.listdir(directory)
@@ -81,6 +117,7 @@ def convolute(img, krnl):
 def houghLine(thresholdMag, dir, pResolution, thetaResolution):
     maxP = math.sqrt(thresholdMag.shape[0] ** 2 + thresholdMag.shape[1] ** 2)
     h = np.zeros((pResolution, thetaResolution))
+
     for y in range(thresholdMag.shape[0]):
         for x in range(thresholdMag.shape[1]):
             d = dir[y][x]
@@ -163,7 +200,13 @@ def printScores(groundTruth, detectionDict, threshold = 0.5):
     
     print("AVERAGE: ", "TP:", totalTP / num_images, "FP:", totalFP / num_images, "FN:", totalFN / num_images, "TPR:", totalTPR / num_images,  "F1:", totalF1 / num_images)
 
-def segmentationProbability(image, detect):
+def isRed(col):
+    return (int(col[2]) - int(col[0]) - int(col[1])) > RedThreshold
+
+def isWhite(col, average):
+    return (np.sum(col) / average) > WhiteThreshold
+
+def segmentationProbability(image, clean, average, detect):
     redSum = 0
     whiteSum = 0
     for j in range(detect[1], detect[1] + detect[3]):
@@ -174,60 +217,62 @@ def segmentationProbability(image, detect):
             if i < 0 or i >= image.shape[1]:
                 continue
             col = image[j][i]
-            redInv = col[0] + col[1]
-            redSum += max(0,col[2] - redInv)
-            maxCol = (np.max(col) * 3)
-            whiteSum += np.sum(col) / (maxCol if maxCol > 0 else 1)
+            cleanCol = clean[j][i]
+            redSum += isRed(col)
+            whiteSum += isWhite(cleanCol, average)
     sum = float(detect[2] * detect[3])
-    return redSum / (sum * 255.0), whiteSum / sum
+    return redSum / sum, whiteSum / sum
    
-def lineProbability(sobelImage, detect, thetaResolution = 10):
-    mag = sobelImage[0][detect[1]:(detect[1] + detect[3]),detect[0]:(detect[0] + detect[2])]
-    dir = sobelImage[1][detect[1]:(detect[1] + detect[3]),detect[0]:(detect[0] + detect[2])]
+def lineProbability(sobelImage, detect, thetaResolution = 5, padding = -5):
+    left = max(0, detect[1] - padding)
+    right = min(sobelImage[0].shape[0] - 1, detect[1] + detect[3] + padding)
+    top = max(0, detect[0] - padding)
+    bottom = min(sobelImage[0].shape[1] - 1, detect[0] + detect[2] + padding)
+
+    mag = sobelImage[0][left:right,top:bottom]
+    dir = sobelImage[1][left:right,top:bottom]
     resolution = detect[2] * detect[3]
     width = thetaResolution
     hSpace = houghLine(mag, dir, 1, width)
     maxLine = (hSpace[0][int(hSpace.shape[1] / 2)]) * (hSpace[0][0] + hSpace[0][width - 1]) / (resolution * width)
     return maxLine
 
-def circleProbability(sobelImage, detect):
-    mag = sobelImage[0][detect[1]:(detect[1] + detect[3]),detect[0]:(detect[0] + detect[2])]
-    dir = sobelImage[1][detect[1]:(detect[1] + detect[3]),detect[0]:(detect[0] + detect[2])]
-    maxWidth = max(detect[2],detect[3])
-    # resolution = detect[2] * detect[3]
+def circleProbability(sobelImage, detect, padding = 5):
+    left = max(0, detect[1] - padding)
+    right = min(sobelImage[0].shape[0] - 1, detect[1] + detect[3] + padding)
+    top = max(0, detect[0] - padding)
+    bottom = min(sobelImage[0].shape[1] - 1, detect[0] + detect[2] + padding)
+
+    mag = sobelImage[0][left:right,top:bottom]
+    dir = sobelImage[1][left:right,top:bottom]
+    maxWidth = max(bottom - top, right - left)
     minRadius = 10
-    maxRadius = int(maxWidth)
+    maxRadius = int(maxWidth + padding)
     hSpace = houghCircle(mag, dir, minRadius, maxRadius)
-    maxCircle = np.max(hSpace[maxWidth // 2][maxWidth // 2])
+    maxCircle = np.max(hSpace[(bottom - top) // 2][(right - left) // 2])
     return maxCircle
 
-def getDetections(model, cleanedImages, images):
+def getDetections(model, cleanedImages, images, threshold = 0.5):
     detectDict = {}
     print("detect")
     for image_name, image in cleanedImages.items():
         print(image_name) 
-        print("Sobel")
+        average = np.average(image)
         sobelOutput = sobel(image, threshold=0.5)
-        print("Detections")
-        detections = model.detectMultiScale(image, scaleFactor=1.01, minNeighbors=1, flags=0, minSize=(10,10), maxSize=(300,300))
+        detections = model.detectMultiScale(image, scaleFactor=1.1, minNeighbors=1, flags=0, minSize=(10,10), maxSize=(300,300))
         filteredDetections = []
-        print("Filter")
         uncleaned = images[image_name]
         for detect in detections:
             print()
-            redSegProb, whiteSegProb = segmentationProbability(uncleaned, detect)
-            print("seg ", redSegProb, " ", whiteSegProb)
-            if (redSegProb < MinRedSegmentProbability or whiteSegProb < MinWhiteSegmentProbability or whiteSegProb > MaxWhiteSegmentProbability):
-                continue
-            # lineProb = lineProbability(sobelOutput, detect)
-            # print(lineProb)
-            # if (lineProb < MinLineProbability or lineProb > MaxLineProbability):
-            #     continue
+            # redSegProb, whiteSegProb = segmentationProbability(uncleaned, image, average, detect)
+            # pSegRed = probabilityFunction(redSegProb, RedMin, RedMax, RedFalloff)
+            # pSegWhite = probabilityFunction(whiteSegProb, WhiteMin, WhiteMax, WhiteFalloff)
+            lineProb = lineProbability(sobelOutput, detect)
+            pLine = probabilityFunction(lineProb, LineMin, LineMax, LineFalloff)
             circleProb = circleProbability(sobelOutput, detect)
-            print("Circle", circleProb)
-            if (circleProb < MinCircleProbability):
-                continue
-            filteredDetections.append(detect)
+            pCircle = probabilityFunction(circleProb, CircleMin, CircleMax, CircleFalloff)
+            if (evaluate(pLine, pCircle)):
+                filteredDetections.append(detect)
         
         detectDict[image_name] = filteredDetections
 
@@ -287,48 +332,163 @@ def drawLines(image, hLine, threshold=10):
                 y1 = int(c + dydx * image.shape[1])
                 cv2.line(image, (0,y0), (image.shape[1], y1), (0,255,0), 1)
 
-def printThresholdRanges(images, cleanImages, groundTruths):
-    minCircle = 1
-    maxCircle = 0
-    minLine = 1
-    maxLine = 0
-    minSegmentation = 1
-    maxSegmentation = 0
-    minWhiteSegmentation = 1
-    maxWhiteSegmentation = 0
+def removeIncorrectDetections(detections, groundTruths):
+    correct = []
+    incorrect = []
+    for A in detections:
+        maxOverlap = 0
+        for B in groundTruths:
+            maxOverlap = max(maxOverlap, intersectionOverUnion(A, B))
+
+        if (maxOverlap >= 0.5):
+            correct.append(A)
+        else:
+            incorrect.append(A)
+    return correct, incorrect
+
+def writeOutputs(images, cleanImages, groundTruths, filename="output.csv"):
+    redSeg = []
+    redSegFalse = []
+    whiteSeg = []
+    whiteSegFalse = []
+    line = []
+    lineFalse = []
+    circle = []
+    circleFalse = []
     for image_name, image in cleanImages.items():
         print(image_name)
+        average = np.mean(image)
         sobelOutput = sobel(image, threshold=0.5) 
-        for gt in groundTruths[image_name]:
-            print("circle")
-            circle = circleProbability(sobelOutput, gt)
-            print(circle)
-            print("line")
-            line = lineProbability(sobelOutput, gt)
-            print("seg")
-            redSegment, whiteSegment = segmentationProbability(images[image_name], gt)
-            minCircle = min(minCircle, circle)
-            maxCircle = max(maxCircle, circle)
-            minLine = min(minLine, line)
-            maxLine = max(maxLine, line)
-            minSegmentation = min(minSegmentation, redSegment)
-            maxSegmentation = max(maxSegmentation, redSegment)
-            minWhiteSegmentation = min(minWhiteSegmentation, whiteSegment)
-            maxWhiteSegmentation = max(maxWhiteSegmentation, whiteSegment)
+        detections = model.detectMultiScale(image, scaleFactor=1.1, minNeighbors=1, flags=0, minSize=(10,10), maxSize=(300,300))
+        correct, incorrect = removeIncorrectDetections(detections, groundTruths[image_name])
+        for gt in correct:
+            c = circleProbability(sobelOutput, gt)
+            circle.append(c)
+            l = lineProbability(sobelOutput, gt)
+            line.append(l)
+            redSegment, whiteSegment = segmentationProbability(images[image_name], image, average, gt)
+            redSeg.append(redSegment)
+            whiteSeg.append(whiteSegment)
+            
+            pSegRed = probabilityFunction(redSegment, RedMin, RedMax, RedFalloff)
+            pSegWhite = probabilityFunction(whiteSegment, WhiteMin, WhiteMax, WhiteFalloff)
+            pLine = probabilityFunction(l, LineMin, LineMax, LineFalloff)
+            pCircle = probabilityFunction(c, CircleMin, CircleMax, CircleFalloff)
+            if (not evaluate(pLine, pCircle, pSegRed, pSegWhite)):
+                print("REJECTED", l, c, redSegment, whiteSegment)
+        for f in incorrect:
+            c = circleProbability(sobelOutput, f)
+            circleFalse.append(c)
+            l = lineProbability(sobelOutput, f)
+            lineFalse.append(l)
+            redSegment, whiteSegment = segmentationProbability(images[image_name], image, average, f)
+            redSegFalse.append(redSegment)
+            whiteSegFalse.append(whiteSegment)
+            
+            pSegRed = probabilityFunction(redSegment, RedMin, RedMax, RedFalloff)
+            pSegWhite = probabilityFunction(whiteSegment, WhiteMin, WhiteMax, WhiteFalloff)
+            pLine = probabilityFunction(l, LineMin, LineMax, LineFalloff)
+            pCircle = probabilityFunction(c, CircleMin, CircleMax, CircleFalloff)
+            if (evaluate(pLine, pCircle, pSegRed, pSegWhite)):
+                print("ACCEPTED", l, c, redSegment, whiteSegment)
+    
+    with open(filename, 'w') as f:
+        f.write("Red Segment\n")
+        f.write("True")
+        for i in redSeg:
+            f.write("," + str(i))
+        f.write("\nFalse")
+        for i in redSegFalse:
+            f.write("," + str(i))
 
+        f.write("\nWhite Segment\n")
+        f.write("True")
+        for i in whiteSeg:
+            f.write("," + str(i))
+        f.write("\nFalse")
+        for i in whiteSegFalse:
+            f.write("," + str(i))
+
+        f.write("\nLine\n")
+        f.write("True")
+        for i in line:
+            f.write("," + str(i))
+        f.write("\nFalse")
+        for i in lineFalse:
+            f.write("," + str(i))
+
+        f.write("\nCircle\n")
+        f.write("True")
+        for i in circle:
+            f.write("," + str(i))
+        f.write("\nFalse")
+        for i in circleFalse:
+            f.write("," + str(i))
+        
+
+def printThresholdRanges(images, cleanImages, groundTruths):
+    redSeg = []
+    whiteSeg = []
+    line = []
+    circle = []
+    for image_name, image in cleanImages.items():
+        print(image_name)
+        average = np.mean(image)
+        sobelOutput = sobel(image, threshold=0.5) 
+        detections = model.detectMultiScale(image, scaleFactor=1.1, minNeighbors=1, flags=0, minSize=(10,10), maxSize=(300,300))
+        correct, incorrect = removeIncorrectDetections(detections, groundTruths[image_name])
+        for gt in correct:
+            c = circleProbability(sobelOutput, gt)
+            circle.append(c)
+            l = lineProbability(sobelOutput, gt)
+            line.append(l)
+            redSegment, whiteSegment = segmentationProbability(images[image_name], image, average, gt)
+            redSeg.append(redSegment)
+            whiteSeg.append(whiteSegment)
+            
+            pSegRed = probabilityFunction(redSegment, RedMin, RedMax, RedFalloff)
+            pSegWhite = probabilityFunction(whiteSegment, WhiteMin, WhiteMax, WhiteFalloff)
+            pLine = probabilityFunction(l, LineMin, LineMax, LineFalloff)
+            pCircle = probabilityFunction(c, CircleMin, CircleMax, CircleFalloff)
+            if (not evaluate(pLine, pCircle, pSegRed, pSegWhite)):
+                print("REJECTED", l, c, redSegment, whiteSegment)
+        for f in incorrect:
+            c = circleProbability(sobelOutput, f)
+            l = lineProbability(sobelOutput, f)
+            redSegment, whiteSegment = segmentationProbability(images[image_name], image, average, f)
+
+            pSegRed = probabilityFunction(redSegment, RedMin, RedMax, RedFalloff)
+            pSegWhite = probabilityFunction(whiteSegment, WhiteMin, WhiteMax, WhiteFalloff)
+            pLine = probabilityFunction(l, LineMin, LineMax, LineFalloff)
+            pCircle = probabilityFunction(c, CircleMin, CircleMax, CircleFalloff)
+            if (evaluate(pLine, pCircle, pSegRed, pSegWhite)):
+                print("ACCEPTED", l, c, redSegment, whiteSegment)
+    
     print("Parameters")
     print("line")
-    print(minLine)
-    print(maxLine)
+    print(np.min(line),  np.max(line))
     print("circle")
-    print(minCircle)
-    print(maxCircle)
+    print(np.min(circle), np.max(circle))
     print("seg")
-    print(minSegmentation)
-    print(maxSegmentation)
+    print(np.min(redSeg), np.max(redSeg))
     print("seg white")
-    print(minWhiteSegmentation)
-    print(maxWhiteSegmentation)
+    print(np.min(whiteSeg), np.max(whiteSeg))
+
+def printHoughSpaces(cleanImages):
+    for image_name, image in cleanImages.items():
+        print(image_name)
+        sobel_image = sobel(image)
+        print("line")
+        hLine = houghLine(sobel_image[0], sobel_image[1], 200, 200) * 2
+        print("circle")
+        hCircle = houghCircle(sobel_image[0], sobel_image[1], 10, 300)
+        circleImage = np.zeros((hCircle.shape[0], hCircle.shape[1]))
+        for y in range(hCircle.shape[0]):
+            for x in range(hCircle.shape[1]):
+                circleImage[y][x] = (np.max(hCircle[y][x]) > MinCircleProbability) * 255.0
+
+        cv2.imwrite("output/line/" + image_name, hLine)
+        cv2.imwrite("output/circle/" + image_name, circleImage)
 
 #Load model
 model = cv2.CascadeClassifier(ClassifierPath)
@@ -336,15 +496,10 @@ print("load images")
 images = loadImages(downscale = 1)
 print("clean images")
 cleanImages = cleanupImages(images)
-for image_name, image in cleanImages.items():
-    cv2.imwrite("output/" + image_name, image)
-
-
 groundTruths = getGroundTruths()
+# writeOutputs(images, cleanImages, groundTruths)
 # printThresholdRanges(images, cleanImages, groundTruths)
 detections = getDetections(model, cleanImages, images)
-
-    
 
 printScores(groundTruths, detections)
 displayDetections(images, detections, (0,255,0), thickness=2)
