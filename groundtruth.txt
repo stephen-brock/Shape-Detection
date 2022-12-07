@@ -14,7 +14,6 @@ NoEntry4.bmp, 743, 210, 46, 46
 NoEntry5.bmp, 127, 313, 40, 40
 NoEntry5.bmp, 307, 332, 34, 34
 NoEntry5.bmp, 431, 345, 29, 29
-NoEntry5.bmp, 431, 345, 29, 29
 NoEntry5.bmp, 523, 355, 24, 24
 NoEntry5.bmp, 595, 364, 23, 23
 NoEntry5.bmp, 651, 369, 19, 19
