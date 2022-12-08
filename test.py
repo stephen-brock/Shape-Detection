@@ -36,7 +36,7 @@ LineImportance = 0.1
 CircleMin = 6
 CircleMax = 100
 CircleFalloff = 3
-CircleImportance = 2
+CircleImportance = 1
 
 #segmentation red parameters
 RedThreshold = 0.3
