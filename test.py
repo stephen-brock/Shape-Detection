@@ -36,7 +36,7 @@ LineImportance = 0.1
 CircleMin = 6
 CircleMax = 100
 CircleFalloff = 3
-CircleImportance = 1
+CircleImportance = 2
 
 #segmentation red parameters
 RedThreshold = 0.3
@@ -46,7 +46,7 @@ RedFalloff = 0.2
 RedImportance = 1
 
 SegmentationSearchThreshold = 0.1
-SegmentationAcceptThreshold = 0.5
+SegmentationAcceptThreshold = 0.75
 
 #segmentation white parameters
 WhiteMinValue = 1.7
@@ -60,7 +60,7 @@ WhiteFalloff = 0.075
 WhiteImportance = 0.5
 
 #acceptance threshold
-TruthThreshold = 0.6
+TruthThreshold = 0.55
 
 #map values between a value of 0-1 depending on variables
 def probabilityFunction(x, smallest, largest, falloff):
@@ -399,7 +399,6 @@ def getDetections(model, cleanedImages, images, extraDetections = {}):
         if image_name in extraDetections:
             detections.extend(extraDetections[image_name])
 
-        detections = removeDuplicates(detections, uncleaned, image, average)
         #begin filtering detections
         for detect in detections:
             print()
@@ -415,6 +414,7 @@ def getDetections(model, cleanedImages, images, extraDetections = {}):
                 #accept detection
                 filteredDetections.append(detect)
         
+        filteredDetections = removeDuplicates(filteredDetections, uncleaned, image, average)
         detectDict[image_name] = filteredDetections
 
     return detectDict
@@ -812,28 +812,28 @@ if (args.name == 'all'):
     #normalise image into one channel
     cleanImages = cleanupImages(images)
     #gets detections based on segmentation
-    # segmentDetections = getDetectionsProbability(cleanImages, images, 10, 300, 1.1, 30, 2)
-    # #calculates and filters detections
-    # detections = getDetections(model, cleanImages, images, segmentDetections)
+    segmentDetections = getDetectionsProbability(cleanImages, images, 10, 300, 1.1, 30, 2)
+    #calculates and filters detections
+    detections = getDetections(model, cleanImages, images, segmentDetections)
 
     #read ground truths from text file
     groundTruths = getGroundTruths()
     #prints data about variables
-    printThresholdRanges(images, cleanImages, groundTruths)
+    # printThresholdRanges(images, cleanImages, groundTruths)
     # writes all value outputs to csv file for analysis
     # writeOutputs(images, cleanImages, groundTruths, detections, filename="output2.csv")
 
-    # #score detections compared to ground truths
-    # printScores(groundTruths, detections)
-    # # #draw detections
-    # displayDetections(images, detections, (0,255,0), thickness=2)
-    # # #draw ground truths
-    # displayDetections(images, groundTruths, (0,0,255), thickness=2)
+    #score detections compared to ground truths
+    printScores(groundTruths, detections)
+    # #draw detections
+    displayDetections(images, detections, (0,255,0), thickness=2)
+    # #draw ground truths
+    displayDetections(images, groundTruths, (0,0,255), thickness=2)
 
-    # #write images with drawn detections
-    # for image_name, image in images.items():
-    #     print(image_name)
-    #     cv2.imwrite("output/" + image_name, image)
+    #write images with drawn detections
+    for image_name, image in images.items():
+        print(image_name)
+        cv2.imwrite("output/" + image_name, image)
 else:
     images = {}
     images[args.name] = cv2.imread(args.name, 1)
