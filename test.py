@@ -73,7 +73,7 @@ def probabilityFunction(x, smallest, largest, falloff):
 #evaluate whether the filter probabilities will accept the detection or not
 def evaluate(lineProb, circleProb, redProb, whiteProb):
     sum = lineProb * LineImportance + circleProb * CircleImportance + redProb * RedImportance + whiteProb * WhiteImportance
-    return (sum / (LineImportance + CircleImportance + RedImportance + WhiteImportance)) >= TruthThreshold
+    return (sum / (LineImportance + CircleImportance + RedImportance + WhiteImportance))
 
 #load all images from the given directory
 def loadImages(directory='No_entry', downscale = 1):
@@ -395,6 +395,7 @@ def getDetections(model, cleanedImages, images, extraDetections = {}):
         detections = model.detectMultiScale(image, scaleFactor=1.1, minNeighbors=1, flags=0, minSize=(10,10), maxSize=(300,300))
         detections = list(detections)
         filteredDetections = []
+        scores = []
         uncleaned = images[image_name]
         if image_name in extraDetections:
             detections.extend(extraDetections[image_name])
@@ -409,17 +410,19 @@ def getDetections(model, cleanedImages, images, extraDetections = {}):
             pLine = probabilityFunction(lineProb, LineMin, LineMax, LineFalloff)
             circleProb = circleProbability(sobelOutput, detect)
             pCircle = probabilityFunction(circleProb, CircleMin, CircleMax, CircleFalloff)
+            score = evaluate(pLine, pCircle, pSegRed, pSegWhite) 
             #evaluate probabilities
-            if evaluate(pLine, pCircle, pSegRed, pSegWhite):
+            if score >= TruthThreshold:
                 #accept detection
                 filteredDetections.append(detect)
+                scores.append(score)
         
-        filteredDetections = removeDuplicates(filteredDetections, uncleaned, image, average)
+        filteredDetections = removeDuplicates(filteredDetections, scores, uncleaned, image, average)
         detectDict[image_name] = filteredDetections
 
     return detectDict
 
-def removeDuplicates(detections, image, cleanImage, average):
+def removeDuplicates(detections, scores, image, cleanImage, average):
     newDetections = []
     copies = []
     while len(detections) > 0:
@@ -431,12 +434,8 @@ def removeDuplicates(detections, image, cleanImage, average):
         bestProb = -1
         bestDetect = -1
         for copy in copies:
-            redSeg, whiteSeg = segmentationProbability(image, cleanImage, average, detections[copy])
-            redProb = probabilityFunction(redSeg, RedMin, RedMax, RedFalloff)
-            whiteProb = probabilityFunction(whiteSeg, WhiteMin, WhiteMax, WhiteFalloff)
-            prob = (redProb * RedImportance + whiteProb * WhiteImportance) / (RedImportance + WhiteImportance)
-            if prob > bestProb:
-                bestProb = prob
+            if scores[copy] > bestProb:
+                bestProb = scores[copy]
                 bestDetect = copy
         
         newDetections.append(detections[bestDetect])
@@ -444,6 +443,7 @@ def removeDuplicates(detections, image, cleanImage, average):
         offset = 0
         for copy in copies:
             detections.pop(copy - offset)
+            scores.pop(copy - offset)
             offset += 1
         
         copies[:] = []
@@ -517,6 +517,7 @@ def getDetectionsProbability(cleanedImages, images, minSize, maxSize, scaleFacto
         whiteImage = createWhiteImage(uncleaned, image, average)
         partitioned = partitionDetections(redImage, whiteImage, maxSpacing, maxSize, 1.5)
         detections = []
+        scores = []
         for partition in partitioned:
             #records best detection
             bestList = [partition]
@@ -557,10 +558,11 @@ def getDetectionsProbability(cleanedImages, images, minSize, maxSize, scaleFacto
             if highestProb > SegmentationAcceptThreshold:
                 print("DETECTED", bestDetect)
                 detections.append(bestDetect)
+                scores.append(highestProb)
         
         #remove any duplicates/overlapping detections
         #cause by large padding resulting in overlapping partitions
-        detections = removeDuplicates(detections, uncleaned, image, np.median(image))
+        detections = removeDuplicates(detections, scores, uncleaned, image, np.median(image))
         # for detect in detections:
         #     uncleaned = cv2.rectangle(uncleaned, (int(detect[0]), int(detect[1])), (int(detect[0] + detect[2]), int(detect[1] + detect[3])), (0,255,0), 1)
 
@@ -755,7 +757,7 @@ def printThresholdRanges(images, cleanImages, groundTruths):
             pLine = probabilityFunction(l, LineMin, LineMax, LineFalloff)
             pCircle = probabilityFunction(c, CircleMin, CircleMax, CircleFalloff)
             #true if true positive was rejected by filter
-            if (not evaluate(pLine, pCircle, pSegRed, pSegWhite)):
+            if (not evaluate(pLine, pCircle, pSegRed, pSegWhite) >= TruthThreshold):
                 print("REJECTED", l, c, redSegment, whiteSegment)
         for f in incorrect:
             # calculate probabilities for false positive
@@ -768,7 +770,7 @@ def printThresholdRanges(images, cleanImages, groundTruths):
             pLine = probabilityFunction(l, LineMin, LineMax, LineFalloff)
             pCircle = probabilityFunction(c, CircleMin, CircleMax, CircleFalloff)
             #true if false positive was accepted by filter
-            if (evaluate(pLine, pCircle, pSegRed, pSegWhite)):
+            if (evaluate(pLine, pCircle, pSegRed, pSegWhite)>= TruthThreshold):
                 print("ACCEPTED", l, c, redSegment, whiteSegment)
     
     #print parameters
