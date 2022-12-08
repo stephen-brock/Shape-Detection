@@ -446,7 +446,7 @@ def removeDuplicates(detections, image, cleanImage, average):
             detections.pop(copy - offset)
             offset += 1
         
-        copies.clear()
+        copies[:] = []
     return newDetections
 
 #partition the segmentation space to reduce duplicates and
@@ -497,10 +497,10 @@ def partitionDetections(redImage, whiteImage, maxSpacing, maxSize, padding):
                         newSearch.append(detect)
             
             newSearchDetections.extend(newSearch)
-            newSearch.clear()
+            newSearch[:] = []
         #new searches
-        searchDetections = newSearchDetections.copy()
-        newSearchDetections.clear()
+        searchDetections = list(newSearchDetections)
+        newSearchDetections[:] = []
     return detections
 
 #gets detections based on segmentation
