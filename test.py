@@ -43,20 +43,24 @@ CircleFalloff = 10
 CircleImportance = 0.5
 
 #segmentation red parameters
-RedThreshold = 60
-RedMin = 0.2
-RedMax = 0.5
+RedThreshold = 0.3
+RedMin = 0.25
+RedMax = 0.6
 RedFalloff = 0.3
 RedImportance = 1
 
 RedSearchThreshold = 0.1
 
 #segmentation white parameters
-WhiteThreshold = 1.2
-WhiteMin = 0.18
-WhiteMax = 0.24
+WhiteMinValue = 1.7
+WhiteMaxValue = 2.0
+WhiteVarInfluence = 20
+WhiteVarThreshold = 0.5
+WhiteFalloffValue = 0.4
+WhiteMin = 0.20
+WhiteMax = 0.35
 WhiteFalloff = 0.3
-WhiteImportance = 0.2
+WhiteImportance = 0.5
 
 #acceptance threshold
 TruthThreshold = 0.55
@@ -64,10 +68,10 @@ TruthThreshold = 0.55
 #map values between a value of 0-1 depending on variables
 def probabilityFunction(x, smallest, largest, falloff):
     diff = min(1, 1 - max(smallest - x, x - largest))
-    diff = min(1, diff) - 1
+    diff -= 1
     diff /= falloff
 
-    return max(MinProbability, min(MaxProbability, max(0, (diff + 1) ** 2)))
+    return max(0, diff + 1) ** 2
     
 #evaluate whether the filter probabilities will accept the detection or not
 def evaluate(lineProb, circleProb, redProb, whiteProb):
@@ -257,29 +261,30 @@ def printScores(groundTruth, detectionDict, threshold = 0.5):
     print("AVERAGE: ", "TP:", totalTP / num_images, "FP:", totalFP / num_images, "FN:", totalFN / num_images, "TPR:", totalTPR / num_images,  "F1:", totalF1 / num_images)
 
 #if pixel is red
-def isRed(col):
+def isRed(col, average):
     #if difference between red channel and others are above a given threshold
-    return (int(col[2]) - int(col[0]) - int(col[1])) > RedThreshold
+    return ((int(col[2]) - int(col[0]) - int(col[1])) / average) > RedThreshold
 
 #is pixel white compared to average
-def isWhite(col, average):
+def isWhite(col, cleanCol, average):
     #if sum of the colours in relation to average 
-    return col / average
+    avg = col / average
+    avgWhite = cleanCol / average
+    return (probabilityFunction(avgWhite, WhiteMinValue, WhiteMaxValue, WhiteFalloffValue) - WhiteVarInfluence * np.var(avg)) > WhiteVarThreshold
 
 
-def createRedImage(image):
+def createRedImage(image, average):
     redImage = np.zeros((image.shape[0],image.shape[1]))
     for i in range(redImage.shape[0]):
         for j in range(redImage.shape[1]):
-            redImage[i][j] = isRed(image[i][j])
+            redImage[i][j] = isRed(image[i][j], average)
     return redImage
 
-def createWhiteImage(image):
-    average = np.mean(image)
+def createWhiteImage(image, cleanImage, average):
     whiteImage = np.zeros((image.shape[0],image.shape[1]))
     for i in range(whiteImage.shape[0]):
         for j in range(whiteImage.shape[1]):
-            whiteImage[i][j] = isWhite(image[i][j], average)
+            whiteImage[i][j] = isWhite(image[i][j], cleanImage[i][j], average)
     return whiteImage
     
 #linearly biases the center of detection
@@ -300,8 +305,8 @@ def segmentationProbability(image, clean, average, detect):
             col = image[j][i]
             cleanCol = clean[j][i]
             #sum pixels which pass red or white test
-            redSum += isRed(col)
-            whiteSum += isWhite(cleanCol, average) * centerBias(j, detect[1] + detect[3] / 2, detect[3]) * centerBias(i, detect[0] + detect[2] / 2, detect[2])
+            redSum += isRed(col, average)
+            whiteSum += isWhite(col, cleanCol, average) * centerBias(j, detect[1] + detect[3] / 2, detect[3]) * centerBias(i, detect[0] + detect[2] / 2, detect[2])
     sum = float(detect[2] * detect[3])
     #divide by the size of the detection
     #for a proportion of pixels
@@ -372,7 +377,6 @@ def getDetections(model, cleanedImages, images, extraDetections = {}):
     detectDict = {}
     for image_name, image in cleanedImages.items():
         print(image_name) 
-        average = np.average(image)
         # sobelOutput = sobel(image, threshold=0.5)
         detections = model.detectMultiScale(image, scaleFactor=1.1, minNeighbors=1, flags=0, minSize=(10,10), maxSize=(300,300))
         detections = list(detections)
@@ -407,7 +411,7 @@ def removeDuplicates(detections, image, cleanImage, average):
     while len(detections) > 0:
         copies.append(0)
         for j in range(1, len(detections)):
-            if (intersection(detections[0], detections[j]) > 0.):
+            if (intersectionOverUnion(detections[0], detections[j]) > 0.1):
                 copies.append(j)
         
         bestProb = -1
@@ -432,26 +436,22 @@ def removeDuplicates(detections, image, cleanImage, average):
     return newDetections
 #partition the segmentation space to reduce duplicates and
 #increase efficiency by only seraching in areas with red space
-def partitionDetections(redImage, whiteImage, minSize, maxSize, padding):
+def partitionDetections(redImage, whiteImage, maxSpacing, maxSize, padding):
     #size equal to half size of image, spliting into around 4 parts
     currentSize = maxSize
-    # average = np.average(image)
     #first detection is the whole image
     searchDetections = [(0,0,redImage.shape[1] - 1, redImage.shape[0] - 1)]
     detections = []
     newSearch = []
     newSearchDetections = []
-    while currentSize > minSize and len(searchDetections) > 0:
+    while currentSize > maxSpacing and len(searchDetections) > 0:
         print("partition size", currentSize)
         #quad tree therefore half size on each iteration to subdivide the space
         currentSize = currentSize // 2
         for currentDetect in searchDetections:
-            found = False
             #amount of iterations to fit inside the image (2 for every iteration other than first)
             xAmount = int(currentDetect[2] // currentSize)
             yAmount = int(currentDetect[3] // currentSize)
-            bestFind = None
-            bestProb = 0
             for j in range(yAmount):
                 #stop looking this branch if an appropriate detection has been found
                 # if found:
@@ -467,30 +467,21 @@ def partitionDetections(redImage, whiteImage, minSize, maxSize, padding):
                         print("end search", detect)
                         #no more searching under this branch
                         #find best detection within this branch and use it as partition
-                        if (redSegProb > bestProb):
-                            bestProb = redSegProb
-                            bestFind = detect
-                        found = True
+                        width = int(currentDetect[2] * padding)
+                        height = int(currentDetect[3] * padding)
+                        x = max(0, detect[0] - width // 2)
+                        y = max(0, detect[1] - height // 2)
+                        #constrain to image borders
+                        width = width - max(0, 1 + x + width - redImage.shape[1])
+                        height = height - max(0, 1 + y + height - redImage.shape[0])
+                        detections.append((x, y, width, height))
                         # break
-                    elif (not found and redSegProb > 0):
+                    elif (redSegProb > 0):
                         #this branch has possible detection, keep looking
                         print("search", detect)
                         newSearch.append(detect)
             
-            if found:
-                #apply padding
-                width = int(currentDetect[2] * padding)
-                height = int(currentDetect[3] * padding)
-                x = max(0, bestFind[0] - width // 2)
-                y = max(0, bestFind[1] - height // 2)
-                #constrain to image borders
-                width = width - max(0, 1 + x + width - redImage.shape[1])
-                height = height - max(0, 1 + y + height - redImage.shape[0])
-                detections.append((x, y, width, height))
-            else:
-                #add new search branches if not detected
-                #reduces duplicates
-                newSearchDetections.extend(newSearch)
+            newSearchDetections.extend(newSearch)
             newSearch.clear()
         #new searches
         searchDetections = newSearchDetections.copy()
@@ -498,7 +489,7 @@ def partitionDetections(redImage, whiteImage, minSize, maxSize, padding):
     return detections
 
 #gets detections based on segmentation
-def getDetectionsProbability(cleanedImages, images, minSize, maxSize, scaleFactor, iterations):
+def getDetectionsProbability(cleanedImages, images, minSize, maxSize, scaleFactor, maxSpacing, iterations):
     detectDict = {}
     print("detect")
     for image_name, image in cleanedImages.items():
@@ -506,9 +497,10 @@ def getDetectionsProbability(cleanedImages, images, minSize, maxSize, scaleFacto
         uncleaned = images[image_name]
         #partions space into areas with segmentation and without
         #reduces duplicates and increases performance
-        redImage = createRedImage(uncleaned)
-        whiteImage = createWhiteImage(image)
-        partitioned = partitionDetections(redImage, whiteImage, minSize * 2, maxSize, 2.0)
+        average = np.median(image)
+        redImage = createRedImage(uncleaned, average)
+        whiteImage = createWhiteImage(uncleaned, image, average)
+        partitioned = partitionDetections(redImage, whiteImage, maxSpacing, maxSize, 2.0)
         detections = []
         for partition in partitioned:
             #records best detection
@@ -547,15 +539,15 @@ def getDetectionsProbability(cleanedImages, images, minSize, maxSize, scaleFacto
                 if prob > highestProb:
                     highestProb = prob
                     bestDetect = detect
-            if highestProb > 0.5:
+            if highestProb > 0.75:
                 print("DETECTED", bestDetect)
                 detections.append(bestDetect)
         
         #remove any duplicates/overlapping detections
         #cause by large padding resulting in overlapping partitions
-        detections = removeDuplicates(detections, uncleaned, image, np.mean(image))
-        for detect in detections:
-            uncleaned = cv2.rectangle(uncleaned, (int(detect[0]), int(detect[1])), (int(detect[0] + detect[2]), int(detect[1] + detect[3])), (0,255,0), 1)
+        detections = removeDuplicates(detections, uncleaned, image, np.median(image))
+        # for detect in detections:
+        #     uncleaned = cv2.rectangle(uncleaned, (int(detect[0]), int(detect[1])), (int(detect[0] + detect[2]), int(detect[1] + detect[3])), (0,255,0), 1)
 
         for partition in partitioned:
             uncleaned = cv2.rectangle(uncleaned, (int(partition[0]), int(partition[1])), (int(partition[0] + partition[2]), int(partition[1] + partition[3])), (255,0,0), 1)
@@ -688,7 +680,7 @@ def writeOutputs(images, cleanImages, groundTruths, detectionDict, filename="out
     circleFalse = []
     for image_name, image in cleanImages.items():
         print(image_name)
-        average = np.mean(image)
+        average = np.median(image)
         sobelOutput = sobel(image, threshold=0.5)
         #filter by true positive/false positive
         detections = detectionDict[image_name]
@@ -799,7 +791,7 @@ if (args.name == 'all'):
     #normalise image into one channel
     cleanImages = cleanupImages(images)
     #gets detections based on segmentation
-    segmentDetections = getDetectionsProbability(cleanImages, images, 10, 300, 1.1, 3)
+    segmentDetections = getDetectionsProbability(cleanImages, images, 10, 300, 1.1, 50, 3)
     #calculates and filters detections
     # detections = getDetections(model, cleanImages, images)
 
@@ -812,14 +804,15 @@ if (args.name == 'all'):
 
     #score detections compared to ground truths
     printScores(groundTruths, segmentDetections)
-    #draw detections
+    # #draw detections
     displayDetections(images, segmentDetections, (0,255,0), thickness=2)
-    #draw ground truths
+    # #draw ground truths
     displayDetections(images, groundTruths, (0,0,255), thickness=2)
 
     #write images with drawn detections
     for image_name, image in images.items():
-        cv2.imwrite("output/" + image_name, image)
+        print(image_name)
+        cv2.imwrite("output/white/" + image_name, image)
 else:
     images = {}
     images[args.name] = cv2.imread(args.name, 1)
@@ -829,7 +822,7 @@ else:
     #prints data about variables
     # printThresholdRanges(images, cleanImages, groundTruths)
     #gets detections based on segmentation
-    segmentDetections = getDetectionsProbability(cleanImages, images, 10, 300, 1.1, 3)
+    segmentDetections = getDetectionsProbability(cleanImages, images, 10, 300, 1.1, 50, 3)
     #calculates and filters detections
     # detections = getDetections(model, cleanImages, images, segmentDetections)
     #draw detections
