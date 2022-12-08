@@ -21,6 +21,7 @@ import argparse
 # Example usage: python filter2d.py -n car1.png
 parser = argparse.ArgumentParser(description='stop sign detection')
 parser.add_argument('-name', '-n', type=str, default='all')
+parser.add_argument('-segmentation', '-s', type=str, default='1')
 args = parser.parse_args()
 
 #Relative path to classifier cascade
@@ -243,7 +244,7 @@ def printScores(groundTruth, detectionDict, threshold = 0.5):
         if (len(gt) == 0):
             tpr = 1
         else:
-            tpr = float(tp) / len(gt)
+            tpr = float(tp) / (tp + fn)
 
         print(image_name, "TP:", tp, "FP:", fp, "FN:", fn, "TPR:", tpr, "F1:", f1Score)
 
@@ -417,12 +418,12 @@ def getDetections(model, cleanedImages, images, extraDetections = {}):
                 filteredDetections.append(detect)
                 scores.append(score)
         
-        filteredDetections = removeDuplicates(filteredDetections, scores, uncleaned, image, average)
+        filteredDetections = removeDuplicates(filteredDetections, scores)
         detectDict[image_name] = filteredDetections
 
     return detectDict
 
-def removeDuplicates(detections, scores, image, cleanImage, average):
+def removeDuplicates(detections, scores):
     newDetections = []
     copies = []
     while len(detections) > 0:
@@ -562,7 +563,7 @@ def getDetectionsProbability(cleanedImages, images, minSize, maxSize, scaleFacto
         
         #remove any duplicates/overlapping detections
         #cause by large padding resulting in overlapping partitions
-        detections = removeDuplicates(detections, scores, uncleaned, image, np.median(image))
+        detections = removeDuplicates(detections, scores)
         # for detect in detections:
         #     uncleaned = cv2.rectangle(uncleaned, (int(detect[0]), int(detect[1])), (int(detect[0] + detect[2]), int(detect[1] + detect[3])), (0,255,0), 1)
 
@@ -738,8 +739,6 @@ def printThresholdRanges(images, cleanImages, groundTruths):
         detections = list(detections)
         if image_name in segmentDetections:
             detections.extend(segmentDetections[image_name])
-
-        detections = removeDuplicates(detections, images[image_name], image, average)
         #filter detections for true positive/false positive
         correct, incorrect = removeIncorrectDetections(detections, groundTruths[image_name])
         for gt in correct:
@@ -757,8 +756,9 @@ def printThresholdRanges(images, cleanImages, groundTruths):
             pLine = probabilityFunction(l, LineMin, LineMax, LineFalloff)
             pCircle = probabilityFunction(c, CircleMin, CircleMax, CircleFalloff)
             #true if true positive was rejected by filter
-            if (not evaluate(pLine, pCircle, pSegRed, pSegWhite) >= TruthThreshold):
-                print("REJECTED", l, c, redSegment, whiteSegment)
+            score = evaluate(pLine, pCircle, pSegRed, pSegWhite)
+            if (not score >= TruthThreshold):
+                print("REJECTED", score, l, c, redSegment, whiteSegment)
         for f in incorrect:
             # calculate probabilities for false positive
             c = circleProbability(sobelOutput, f)
@@ -770,8 +770,9 @@ def printThresholdRanges(images, cleanImages, groundTruths):
             pLine = probabilityFunction(l, LineMin, LineMax, LineFalloff)
             pCircle = probabilityFunction(c, CircleMin, CircleMax, CircleFalloff)
             #true if false positive was accepted by filter
-            if (evaluate(pLine, pCircle, pSegRed, pSegWhite)>= TruthThreshold):
-                print("ACCEPTED", l, c, redSegment, whiteSegment)
+            score = evaluate(pLine, pCircle, pSegRed, pSegWhite)
+            if (score >= TruthThreshold):
+                print("ACCEPTED", score, l, c, redSegment, whiteSegment)
     
     #print parameters
     print("Parameters")
@@ -813,11 +814,15 @@ if (args.name == 'all'):
     print("clean images")
     #normalise image into one channel
     cleanImages = cleanupImages(images)
-    #gets detections based on segmentation
-    segmentDetections = getDetectionsProbability(cleanImages, images, 10, 300, 1.1, 30, 2)
+    segmentDetections = {}
+
+    if (args.segmentation == '1'):
+        #gets detections based on segmentation
+        segmentDetections = getDetectionsProbability(cleanImages, images, 10, 300, 1.1, 30, 2)
+    
     #calculates and filters detections
     detections = getDetections(model, cleanImages, images, segmentDetections)
-
+    
     #read ground truths from text file
     groundTruths = getGroundTruths()
     #prints data about variables
@@ -845,9 +850,16 @@ else:
     #prints data about variables
     # printThresholdRanges(images, cleanImages, groundTruths)
     #gets detections based on segmentation
-    segmentDetections = getDetectionsProbability(cleanImages, images, 10, 300, 1.1, 30, 2)
+    segmentDetections = {}
+
+    if (args.segmentation == '1'):
+        #gets detections based on segmentation
+        segmentDetections = getDetectionsProbability(cleanImages, images, 10, 300, 1.1, 30, 2)
+    
     #calculates and filters detections
     detections = getDetections(model, cleanImages, images, segmentDetections)
+    #read ground truths from text file
+    groundTruths = getGroundTruths()
     #draw detections
     displayDetections(images, detections, (0,255,0), thickness=2)
 
