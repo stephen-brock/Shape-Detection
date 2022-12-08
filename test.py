@@ -145,7 +145,7 @@ def useKernel(img, x, y, krnl, size):
 #convolute kernel
 def convolute(img, krnl):
     newImage = np.zeros(img.shape)
-    krnlSize = math.ceil(krnl.shape[0] / 2)
+    krnlSize = (krnl.shape[0] // 2) + 1
     for y in range(img.shape[0]):
         for x in range(img.shape[1]):
             newImage[y][x] = useKernel(img, x, y, krnl, krnlSize)
